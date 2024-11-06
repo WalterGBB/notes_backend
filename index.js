@@ -1,9 +1,18 @@
 const express = require('express')
+const morgan = require('morgan')
 const cors = require('cors')
 const app = express()
 
 app.use(cors())
+app.use(morgan(':method :url :status - :res[content-length] - :response-time ms - :body'))
 app.use(express.json())
+app.use(express.static('dist'))
+
+morgan.token('body', (req, res) => {
+    if (req.method === 'POST') return JSON.stringify({ id: res.locals.createdNoteId, ...req.body })
+    if (req.method === 'PUT') return res.locals.updatedBody
+    return '{}'
+})
 
 let notes = [
     {
@@ -60,13 +69,13 @@ app.post('/api/notes', (request, response) => {
     }
 
     const note = {
-        content: body.content,
-        important: Boolean(body.important) || false,
         id: generateId(),
+        content: body.content,
+        important: Boolean(body.important)
     }
 
     notes = notes.concat(note)
-
+    response.locals.createdNoteId = note.id
     response.json(note)
 })
 
@@ -75,6 +84,20 @@ app.delete('/api/notes/:id', (request, response) => {
     notes = notes.filter(note => note.id !== id)
 
     response.status(204).end()
+})
+
+app.put('/api/notes/:id', (request, response) => {
+    const id = Number(request.params.id)
+    const note = notes.find(n => n.id === id)
+    const updatedNote = { ...note, important: !note.important }
+
+    if (note) {
+        notes = notes.map(note => note.id !== id ? note : updatedNote)
+        response.locals.updatedBody = JSON.stringify(updatedNote)
+        return response.json(updatedNote)
+    } else {
+        return response.json(updatedNote)
+    }
 })
 
 const PORT = process.env.PORT || 3001
