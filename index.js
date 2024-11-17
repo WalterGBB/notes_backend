@@ -17,48 +17,27 @@ morgan.token('body', (req, res) => {
     return '{}'
 })
 
-const mongoose = require('mongoose')
-const password = process.argv[2]
-const url =
-    `mongodb+srv://waztercraft:${password}@cluster0.wsmtr.mongodb.net/noteApp?retryWrites=true&w=majority&appName=Cluster0`
+// let notes = [
+//     {
+//         id: 1,
+//         content: "HTML is easy",
+//         important: true
+//     },
+//     {
+//         id: 2,
+//         content: "Browser can execute only JavaScript",
+//         important: false
+//     },
+//     {
+//         id: 3,
+//         content: "GET and POST are the most important methods of HTTP protocol",
+//         important: true
+//     }
+// ]
 
-mongoose.set('strictQuery', false)
-mongoose.connect(url)
-
-const noteSchema = new mongoose.Schema({
-    content: String,
-    important: Boolean,
-})
-
-noteSchema.set('toJSON', {
-    transform: (document, returnedObject) => {
-        returnedObject.id = returnedObject._id.toString()
-        delete returnedObject._id
-        delete returnedObject.__v
-    }
-})
-
-let notes = [
-    {
-        id: 1,
-        content: "HTML is easy",
-        important: true
-    },
-    {
-        id: 2,
-        content: "Browser can execute only JavaScript",
-        important: false
-    },
-    {
-        id: 3,
-        content: "GET and POST are the most important methods of HTTP protocol",
-        important: true
-    }
-]
-
-app.get('/', (request, response) => {
-    response.send('<h1>Hello World!</h1>')
-})
+// app.get('/', (request, response) => {
+//     response.send('<h1>Hello World!</h1>')
+// })
 
 app.get('/api/notes', (request, response) => {
     Note.find({}).then(notes => {
@@ -66,65 +45,104 @@ app.get('/api/notes', (request, response) => {
     })
 })
 
-app.get('/api/notes/:id', (request, response) => {
-    const id = Number(request.params.id)
-    const note = notes.find(note => note.id === id)
-
-
-    if (note) {
-        response.json(note)
-    } else {
-        response.status(404).end()
-    }
+app.get('/api/notes/:id', (request, response, next) => {
+    const { id } = request.params
+    Note.findById(id)
+        .then(note => {
+            if (note) {
+                response.json(note)
+            } else {
+                response.status(404).end()
+            }
+        })
+        .catch(error => next(error))
 })
 
-const generateId = () => {
-    const maxId = notes.length > 0
-        ? Math.max(...notes.map(n => n.id))
-        : 0
-    return maxId + 1
-}
+// const generateId = () => {
+//     const maxId = notes.length > 0
+//         ? Math.max(...notes.map(n => n.id))
+//         : 0
+//     return maxId + 1
+// }
 
-app.post('/api/notes', (request, response) => {
+app.post('/api/notes', (request, response, next) => {
     const body = request.body
 
-    if (!body.content) {
+    if (body.content === undefined || body.content.length === 0) {
         return response.status(400).json({
             error: 'content missing'
         })
     }
 
-    const note = {
-        id: generateId(),
+    const note = new Note({
         content: body.content,
         important: Boolean(body.important)
+    })
+
+    note.save()
+        .then(savedNote => {
+            response.status(201).json({
+                message: 'Successfully created',
+                id: savedNote.id,
+                content: savedNote.content,
+                important: savedNote.important
+            })
+        })
+        .catch(error => next(error))
+})
+
+app.delete('/api/notes/:id', (request, response, next) => {
+    const { id } = request.params
+    Note.findByIdAndDelete(id)
+        .then(() => {
+            response.status(204).end()  // 204 indica que la eliminación fue exitosa y no hay contenido que devolver
+        })
+        .catch(error => next(error))
+})
+
+app.put('/api/notes/:id', (request, response, next) => {
+    const { id } = request.params
+    const { content, important } = request.body
+
+    Note.findByIdAndUpdate(
+        id,
+        { content, important },
+        /*runValidators: true fuerza a que Mongoose valide los datos antes de 
+        actualizarlos en la base de datos */
+        /*Se especifica el contexto 'query', que es necesario para que ciertas 
+        validaciones (como validaciones personalizadas o dependientes de otras 
+        propiedades) funcionen durante una actualización con findByIdAndUpdate. */
+        { new: true, runValidators: true, context: 'query' }
+    )
+        .then(updatedNote => {
+            response.json(updatedNote)
+        })
+        .catch(error => next(error))
+})
+
+// Todas las rutas deben ser registrada antes que esto:
+const unknownEndpoint = (request, response) => {
+    response.status(404).send({ error: 'unknown endpoint' })
+}
+
+// controlador de solicitudes con endpoint desconocido
+app.use(unknownEndpoint)
+
+// controlador de errores
+const errorHandler = (error, request, response, next) => {
+    console.error(error.message)
+
+    if (error.name === 'CastError') {
+        return response.status(400).send({ error: 'malformatted id' })
+    } else if (error.name === 'ValidationError') {
+        return response.status(400).json({ error: error.message })
     }
 
-    notes = notes.concat(note)
-    response.locals.createdNoteId = note.id
-    response.json(note)
-})
+    next(error)
+}
 
-app.delete('/api/notes/:id', (request, response) => {
-    const id = Number(request.params.id)
-    notes = notes.filter(note => note.id !== id)
-
-    response.status(204).end()
-})
-
-app.put('/api/notes/:id', (request, response) => {
-    const id = Number(request.params.id)
-    const note = notes.find(n => n.id === id)
-    const updatedNote = { ...note, important: !note.important }
-
-    if (note) {
-        notes = notes.map(note => note.id !== id ? note : updatedNote)
-        response.locals.updatedBody = JSON.stringify(updatedNote)
-        return response.json(updatedNote)
-    } else {
-        return response.json(updatedNote)
-    }
-})
+// Este debe ser el último middleware cargado, ¡también todas las rutas deben ser registrada antes que esto!
+app.use(errorHandler)
 
 const PORT = process.env.PORT
 app.listen(PORT, () => {
